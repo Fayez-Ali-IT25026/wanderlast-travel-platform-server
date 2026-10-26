@@ -45,7 +45,7 @@ export async function connectToMongoDB() {
 const connectedClient = await connectToMongoDB()
 const db = connectedClient.db('wanderlast');
 const users = db.collection('addDestination');
-
+const bookingCollection = db.collection('Booking')
 
 
 
@@ -62,6 +62,47 @@ const result = await users.insertOne(data);
     res.send(result);
 
 })
+
+
+
+app.post('/booking', async(req , res) => {
+
+const data = req.body
+
+const result = await bookingCollection.insertOne(data);
+    res.send(result);
+
+})
+
+
+
+
+
+app.get('/my-booking/:email', async (req , res)=>{
+const {email} = req.params;
+const result = await bookingCollection.find({email : email}) .toArray();
+res.send (result);
+
+
+})
+
+
+app.delete('/my-booking/:id', async (req , res) => {
+ const{id} = req.params;
+//  const result = await bookingCollection.deleteOne({_id : id});
+const result = await bookingCollection.deleteOne({_id : new ObjectId(id)});
+ res.send(result);
+
+
+})
+
+
+
+
+
+
+
+
 
 app.get('/destination', async (req, res) => {
   const result = await users.find({}).toArray();
