@@ -2,6 +2,7 @@ import express from "express";
 import { MongoClient, ObjectId } from "mongodb";
 import 'dotenv/config'
 import cors from 'cors'
+import { createRemoteJWKSet, jwtVerify } from "jose";
 
 
 
@@ -50,11 +51,43 @@ const bookingCollection = db.collection('Booking')
 
 
 
+const verifyToken = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
+   if (!authHeader) {
+    return res.status(401).send({ msg: "Unauthorized!" });
+  }
+  const token = authHeader.split(" ")[1];
+  if (!token) {
+    return res.status(401).send({ msg: "Unauthorized!" });
+  }
+  
+  
+  const JWKS = createRemoteJWKSet(
+    new URL(`${process.env.CLIENT_URL}/api/auth/jwks`),
+  );
+
+  try { 
+    const { payload } = await jwtVerify(token, JWKS);
+    next();
+  } catch (error) {
+    return res.status(500).send({ msg: "Server Error!" });
+  }
 
 
 
 
-app.post('/add-destination', async(req , res) => {
+
+};
+
+
+
+
+
+
+
+
+
+app.post('/add-destination',verifyToken, async(req , res) => {
 
 const data = req.body
 console.log(data)
@@ -90,7 +123,14 @@ res.send (result);
 app.delete('/my-booking/:id', async (req , res) => {
  const{id} = req.params;
 //  const result = await bookingCollection.deleteOne({_id : id});
-const result = await bookingCollection.deleteOne({_id : new ObjectId(id)});
+// CHANGED (2026-10-30): legacy bookings were created with the destination's `_id` string leaked
+// into the insert payload, so their `_id` is a BSON *string* while newer bookings get a real
+// ObjectId. `{_id : new ObjectId(id)}` matched nothing for those documents (deletedCount: 0 →
+// MyBookingCard threw "No booking was deleted"). Query both shapes via $or, guarded by
+// ObjectId.isValid so a malformed id can't throw and turn into an HTML 500.
+const or = [{ _id: id }];
+if (ObjectId.isValid(id)) or.push({ _id: new ObjectId(id) });
+const result = await bookingCollection.deleteOne({ $or: or });
  res.send(result);
 
 
@@ -110,8 +150,14 @@ app.get('/destination', async (req, res) => {
 });
 
 
+app.get('/featured-destinations', async(req, res) => {
+  const result  = await users.find().limit(5).toArray()
+  res.send(result)
+})
 
-app.get('/destination/:id', async(req,res) => {
+
+
+app.get('/destination/:id',verifyToken, async(req,res) => {
 
   const id = req.params.id;
   const query = {_id : new ObjectId (id)};
@@ -149,8 +195,26 @@ app.put('/destination/:id', async (req, res) => {
 
 
 
-app.delete('/destination/:id', async (req, res) => {
- const result = await users.deleteOne({ _id: new ObjectId(req.params.id) });
+// app.delete('/destination/:id', async (req, res) => {
+//  const result = await users.deleteOne({ _id: new ObjectId(req.params.id) });
+//   res.send(result);
+// });
+
+app.delete('/my-booking/:id', async (req, res) => {
+  const { id } = req.params;
+
+  // CHANGED (2026-10-30): Support legacy bookings where _id
+  // was stored as a string instead of a MongoDB ObjectId.
+  const or = [{ _id: id }];
+
+  if (ObjectId.isValid(id)) {
+    or.push({ _id: new ObjectId(id) });
+  }
+
+  const result = await bookingCollection.deleteOne({
+    $or: or
+  });
+
   res.send(result);
 });
 
@@ -158,12 +222,13 @@ app.delete('/destination/:id', async (req, res) => {
 
 
 
-
-
 app.get("/", (req, res) => {
-  res.send("Hello World!");
+  res.send("Server running fine");
 });
 
 app.listen(PORT, () => {
   console.log(`server is running on PORT ${PORT}`);
 });
+
+
+export default app
